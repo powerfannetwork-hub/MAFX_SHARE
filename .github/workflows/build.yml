@@ -1,0 +1,46 @@
+name: Build MAFX SHARE APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Unpack project
+        run: |
+          test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
+          unzip -o mafx_share.zip -d app
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - name: Create Android project
+        working-directory: app
+        run: |
+          flutter create --org com.mafx --project-name share --platforms=android build_app
+          cp pubspec.yaml build_app/pubspec.yaml
+          rm -rf build_app/lib build_app/test
+          cp -r lib build_app/lib
+          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
+
+      - name: Build APK
+        working-directory: app/build_app
+        run: |
+          flutter pub get
+          flutter build apk --release
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mafx-share-apk
+          path: app/build_app/build/app/outputs/flutter-apk/app-release.apk

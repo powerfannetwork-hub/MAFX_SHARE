@@ -34,10 +34,13 @@ jobs:
           cp -r lib build_app/lib
           cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
 
-      - name: Build APK
+       - name: Build APK
         working-directory: app/build_app
         run: |
           flutter pub get
+          for f in $HOME/.pub-cache/hosted/pub.dev/*/android/build.gradle*; do
+            sed -i -E 's/compileSdk(Version)?([ =]+)[0-9]+/compileSdk\2 36/' "$f"
+          done
           flutter build apk --release
 
       - uses: actions/upload-artifact@v4

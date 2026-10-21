@@ -14,6 +14,7 @@ jobs:
       - name: Unpack project
         run: |
           test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
+          rm -rf app
           unzip -o mafx_share.zip -d app
 
       - uses: actions/setup-java@v4
@@ -25,38 +26,8 @@ jobs:
         with:
           channel: stable
 
-      - name: Create Android project
-        working-directory: app
-        run: |
-          flutter create --org com.mafx --project-name share --platforms=android build_app
-          cp pubspec.yaml build_app/pubspec.yaml
-          rm -rf build_app/lib build_app/test
-          cp -r lib build_app/lib
-          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
-
       - name: Build APK
-        working-directory: app/build_app
-        run: |
-          flutter pub get
-          python3 - <<'PY'
-          import json, os, re, urllib.parse
-          cfg = json.load(open('.dart_tool/package_config.json'))
-          for pkg in cfg['packages']:
-              root = pkg['rootUri']
-              if root.startswith('file://'):
-                  base = urllib.parse.unquote(root[len('file://'):])
-              else:
-                  base = os.path.normpath(os.path.join('.dart_tool', root))
-              for name in ('build.gradle', 'build.gradle.kts'):
-                  f = os.path.join(base, 'android', name)
-                  if os.path.isfile(f):
-                      s = open(f).read()
-                      n = re.sub(r'(compileSdk(?:Version)?\s*[=(]?\s*)\d+', r'\g<1>36', s)
-                      if n != s:
-                          open(f, 'w').write(n)
-                          print('patched', f)
-          PY
-          flutter build apk --release
+        run: bash app/ci_build.sh
 
       - uses: actions/upload-artifact@v4
         with:

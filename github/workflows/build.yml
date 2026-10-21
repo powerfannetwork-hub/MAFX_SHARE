@@ -13,11 +13,8 @@ jobs:
 
       - name: Unpack project
         run: |
-          rm -rf app build_app
-          test -f mafx_share.zip || (echo "mafx_share.zip not found" && ls && exit 1)
+          test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
           unzip -o mafx_share.zip -d app
-          echo "=== ZIP CONTENT ==="
-          cat app/pubspec.yaml || true
 
       - uses: actions/setup-java@v4
         with:
@@ -27,129 +24,39 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: "3.32.8"
 
-      - name: Create Android project + PATCH TO 36
+      - name: Create Android project
         working-directory: app
         run: |
           flutter create --org com.mafx --project-name share --platforms=android build_app
-
-          # FORCE OVERWRITE pubspec.yaml with SDK 36 compatible libs - NO MORE 8.3.7
-          cat > build_app/pubspec.yaml <<'PUB'
-          name: share
-          description: MAFX SHARE - 6x Xender
-          publish_to: 'none'
-          version: 1.0.0+1
-          environment:
-            sdk: '>=3.3.0 <4.0.0'
-          dependencies:
-            flutter:
-              sdk: flutter
-            cupertino_icons: ^1.0.8
-            qr_flutter: ^4.1.0
-            mobile_scanner: ^6.0.10
-            permission_handler: ^11.3.1
-            path_provider: ^2.1.4
-            uuid: ^4.5.1
-            video_player: ^2.9.2
-            photo_manager: ^3.3.1
-            file_picker: ^10.1.9
-            hive: ^2.2.3
-            hive_flutter: ^1.1.0
-            http: ^1.2.2
-            path: ^1.9.0
-            flutter_plugin_android_lifecycle: ^2.0.22
-          dev_dependencies:
-            flutter_test:
-              sdk: flutter
-            flutter_lints: ^4.0.0
-          flutter:
-            uses-material-design: true
-          PUB
-
+          cp pubspec.yaml build_app/pubspec.yaml
           rm -rf build_app/lib build_app/test
           cp -r lib build_app/lib
-          mkdir -p build_app/android/app/src/main
-          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml 2>/dev/null || echo "no overrides manifest"
-
-          # Patch build.gradle
-          cat > build_app/android/app/build.gradle <<'GRADLE'
-          plugins {
-              id "com.android.application"
-              id "kotlin-android"
-              id "dev.flutter.flutter-gradle-plugin"
-          }
-          def localProperties = new Properties()
-          def localPropertiesFile = rootProject.file('local.properties')
-          if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader('UTF-8') { reader -> localProperties.load(reader) }
-          }
-          def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
-          if (flutterVersionCode == null) { flutterVersionCode = '1' }
-          def flutterVersionName = localProperties.getProperty('flutter.versionName')
-          if (flutterVersionName == null) { flutterVersionName = '1.0' }
-          android {
-              namespace "com.mafx.share"
-              compileSdk 36
-              ndkVersion "27.0.12077973"
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-              kotlinOptions { jvmTarget = '17' }
-              sourceSets { main.java.srcDirs += 'src/main/kotlin' }
-              defaultConfig {
-                  applicationId "com.mafx.share"
-                  minSdk 23
-                  targetSdk 36
-                  versionCode flutterVersionCode.toInteger()
-                  versionName flutterVersionName
-              }
-              buildTypes { release { signingConfig signingConfigs.debug } }
-          }
-          flutter { source '../..' }
-          dependencies {}
-          GRADLE
-
-          cat > build_app/android/settings.gradle <<'SETTINGS'
-          pluginManagement {
-              def flutterSdkPath = {
-                  def properties = new Properties()
-                  file("local.properties").withInputStream { properties.load(it) }
-                  def flutterSdkPath = properties.getProperty("flutter.sdk")
-                  assert flutterSdkPath != null, "flutter.sdk not set"
-                  return flutterSdkPath
-              }()
-              includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-              repositories { google(); mavenCentral(); gradlePluginPortal() }
-          }
-          plugins {
-              id "dev.flutter.flutter-plugin-loader" version "1.0.0"
-              id "com.android.application" version "8.3.1" apply false
-              id "org.jetbrains.kotlin.android" version "2.1.0" apply false
-          }
-          include ":app"
-          SETTINGS
-
-          cat > build_app/android/build.gradle <<'BUILD'
-          allprojects { repositories { google(); mavenCentral() } }
-          rootProject.buildDir = "../build"
-          subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
-          subprojects { project.evaluationDependsOn(":app") }
-          tasks.register("clean", Delete) { delete rootProject.buildDir }
-          BUILD
-
-          echo "=== FINAL PUBSPEC ==="
-          cat build_app/pubspec.yaml
+          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
 
       - name: Build APK
         working-directory: app/build_app
         run: |
-          flutter clean
           flutter pub get
-          echo "=== Checking file_picker version ==="
-          flutter pub deps | grep file_picker
-          flutter build apk --release --verbose
+          python3 - <<'PY'
+          import json, os, re, urllib.parse
+          cfg = json.load(open('.dart_tool/package_config.json'))
+          for pkg in cfg['packages']:
+              root = pkg['rootUri']
+              if root.startswith('file://'):
+                  base = urllib.parse.unquote(root[len('file://'):])
+              else:
+                  base = os.path.normpath(os.path.join('.dart_tool', root))
+              for name in ('build.gradle', 'build.gradle.kts'):
+                  f = os.path.join(base, 'android', name)
+                  if os.path.isfile(f):
+                      s = open(f).read()
+                      n = re.sub(r'(compileSdk(?:Version)?\s*[=(]?\s*)\d+', r'\g<1>36', s)
+                      if n != s:
+                          open(f, 'w').write(n)
+                          print('patched', f)
+          PY
+          flutter build apk --release
 
       - uses: actions/upload-artifact@v4
         with:

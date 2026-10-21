@@ -13,9 +13,11 @@ jobs:
 
       - name: Unpack project
         run: |
-          test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
+          rm -rf app build_app
+          test -f mafx_share.zip || (echo "mafx_share.zip not found" && ls && exit 1)
           unzip -o mafx_share.zip -d app
-          ls -R app
+          echo "=== ZIP CONTENT ==="
+          cat app/pubspec.yaml || true
 
       - uses: actions/setup-java@v4
         with:
@@ -27,15 +29,15 @@ jobs:
           channel: stable
           flutter-version: "3.32.8"
 
-      - name: Create Android project + FORCE FIX SDK 36
+      - name: Create Android project + PATCH TO 36
         working-directory: app
         run: |
           flutter create --org com.mafx --project-name share --platforms=android build_app
-          
-          # === 1. OVERWRITE pubspec.yaml with SDK 36 compatible versions ===
+
+          # FORCE OVERWRITE pubspec.yaml with SDK 36 compatible libs - NO MORE 8.3.7
           cat > build_app/pubspec.yaml <<'PUB'
           name: share
-          description: MAFX SHARE - 6x Xender High Speed
+          description: MAFX SHARE - 6x Xender
           publish_to: 'none'
           version: 1.0.0+1
           environment:
@@ -68,47 +70,34 @@ jobs:
           rm -rf build_app/lib build_app/test
           cp -r lib build_app/lib
           mkdir -p build_app/android/app/src/main
-          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml || true
+          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml 2>/dev/null || echo "no overrides manifest"
 
-          # === 2. app/build.gradle -> SDK 36 ===
-          cat > build_app/android/app/build.gradle <<'EOF'
+          # Patch build.gradle
+          cat > build_app/android/app/build.gradle <<'GRADLE'
           plugins {
               id "com.android.application"
               id "kotlin-android"
               id "dev.flutter.flutter-gradle-plugin"
           }
-
           def localProperties = new Properties()
           def localPropertiesFile = rootProject.file('local.properties')
           if (localPropertiesFile.exists()) {
-              localPropertiesFile.withReader('UTF-8') { reader ->
-                  localProperties.load(reader)
-              }
+              localPropertiesFile.withReader('UTF-8') { reader -> localProperties.load(reader) }
           }
-
           def flutterVersionCode = localProperties.getProperty('flutter.versionCode')
           if (flutterVersionCode == null) { flutterVersionCode = '1' }
           def flutterVersionName = localProperties.getProperty('flutter.versionName')
           if (flutterVersionName == null) { flutterVersionName = '1.0' }
-
           android {
               namespace "com.mafx.share"
               compileSdk 36
               ndkVersion "27.0.12077973"
-
               compileOptions {
                   sourceCompatibility JavaVersion.VERSION_17
                   targetCompatibility JavaVersion.VERSION_17
               }
-
-              kotlinOptions {
-                  jvmTarget = '17'
-              }
-
-              sourceSets {
-                  main.java.srcDirs += 'src/main/kotlin'
-              }
-
+              kotlinOptions { jvmTarget = '17' }
+              sourceSets { main.java.srcDirs += 'src/main/kotlin' }
               defaultConfig {
                   applicationId "com.mafx.share"
                   minSdk 23
@@ -116,23 +105,13 @@ jobs:
                   versionCode flutterVersionCode.toInteger()
                   versionName flutterVersionName
               }
-
-              buildTypes {
-                  release {
-                      signingConfig signingConfigs.debug
-                  }
-              }
+              buildTypes { release { signingConfig signingConfigs.debug } }
           }
-
-          flutter {
-              source '../..'
-          }
-
+          flutter { source '../..' }
           dependencies {}
-          EOF
+          GRADLE
 
-          # === 3. settings.gradle ===
-          cat > build_app/android/settings.gradle <<'EOF'
+          cat > build_app/android/settings.gradle <<'SETTINGS'
           pluginManagement {
               def flutterSdkPath = {
                   def properties = new Properties()
@@ -141,53 +120,35 @@ jobs:
                   assert flutterSdkPath != null, "flutter.sdk not set"
                   return flutterSdkPath
               }()
-
               includeBuild("$flutterSdkPath/packages/flutter_tools/gradle")
-
-              repositories {
-                  google()
-                  mavenCentral()
-                  gradlePluginPortal()
-              }
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
           }
-
           plugins {
               id "dev.flutter.flutter-plugin-loader" version "1.0.0"
               id "com.android.application" version "8.3.1" apply false
               id "org.jetbrains.kotlin.android" version "2.1.0" apply false
           }
-
           include ":app"
-          EOF
+          SETTINGS
 
-          cat > build_app/android/build.gradle <<'EOF'
-          allprojects {
-              repositories {
-                  google()
-                  mavenCentral()
-              }
-          }
+          cat > build_app/android/build.gradle <<'BUILD'
+          allprojects { repositories { google(); mavenCentral() } }
           rootProject.buildDir = "../build"
-          subprojects {
-              project.buildDir = "${rootProject.buildDir}/${project.name}"
-          }
-          subprojects {
-              project.evaluationDependsOn(":app")
-          }
-          tasks.register("clean", Delete) {
-              delete rootProject.buildDir
-          }
-          EOF
+          subprojects { project.buildDir = "${rootProject.buildDir}/${project.name}" }
+          subprojects { project.evaluationDependsOn(":app") }
+          tasks.register("clean", Delete) { delete rootProject.buildDir }
+          BUILD
 
-          echo "=== PATCHED FILES ==="
+          echo "=== FINAL PUBSPEC ==="
           cat build_app/pubspec.yaml
-          cat build_app/android/app/build.gradle
 
       - name: Build APK
         working-directory: app/build_app
         run: |
           flutter clean
           flutter pub get
+          echo "=== Checking file_picker version ==="
+          flutter pub deps | grep file_picker
           flutter build apk --release --verbose
 
       - uses: actions/upload-artifact@v4

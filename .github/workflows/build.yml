@@ -4,19 +4,40 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
+    paths:
+      - "*.zip"
+      - ".github/workflows/**"
+
+# A new push or run cancels any older build that is still queued/running.
+concurrency:
+  group: build-apk
+  cancel-in-progress: true
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-      - name: Unpack project
+      - name: Unpack newest project zip
         run: |
-          test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
+          # Use the .zip that was committed most recently, whatever its name is.
+          # So you can just upload "mafx_share-5.zip" - no delete/rename needed.
+          ZIP=""
+          BEST=0
+          for f in ./*.zip; do
+            [ -f "$f" ] || continue
+            T=$(git log -1 --format=%ct -- "$f")
+            [ -n "$T" ] || continue
+            if [ "$T" -gt "$BEST" ]; then BEST=$T; ZIP="$f"; fi
+          done
+          [ -n "$ZIP" ] || { echo "No .zip found in the repo root"; exit 1; }
+          echo "Using: $ZIP"
           rm -rf app
-          unzip -o mafx_share.zip -d app
-          test -f app/ci_build.sh || (echo "OLD ZIP: ci_build.sh is missing, upload the new zip" && exit 1)
+          unzip -o "$ZIP" -d app
+          test -f app/ci_build.sh || { echo "OLD ZIP: ci_build.sh is missing, upload the new zip"; exit 1; }
 
       - uses: actions/setup-java@v4
         with:

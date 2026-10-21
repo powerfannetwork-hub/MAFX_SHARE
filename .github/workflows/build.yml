@@ -14,7 +14,9 @@ jobs:
       - name: Unpack project
         run: |
           test -f mafx_share.zip || (echo "mafx_share.zip not found" && exit 1)
+          rm -rf app
           unzip -o mafx_share.zip -d app
+          test -f app/ci_build.sh || (echo "OLD ZIP: ci_build.sh is missing, upload the new zip" && exit 1)
 
       - uses: actions/setup-java@v4
         with:
@@ -25,20 +27,8 @@ jobs:
         with:
           channel: stable
 
-      - name: Create Android project
-        working-directory: app
-        run: |
-          flutter create --org com.mafx --project-name share --platforms=android build_app
-          cp pubspec.yaml build_app/pubspec.yaml
-          rm -rf build_app/lib build_app/test
-          cp -r lib build_app/lib
-          cp android_overrides/AndroidManifest.xml build_app/android/app/src/main/AndroidManifest.xml
-
       - name: Build APK
-        working-directory: app/build_app
-        run: |
-          flutter pub get
-          flutter build apk --release
+        run: bash app/ci_build.sh
 
       - uses: actions/upload-artifact@v4
         with:
